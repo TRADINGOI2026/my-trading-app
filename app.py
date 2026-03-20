@@ -1,38 +1,32 @@
 import streamlit as st
 import pandas as pd
 
-# Page Configuration
-st.set_page_config(page_title="Live Market Watch", layout="wide")
+st.set_page_config(page_title="Nifty Options Scanner", layout="wide")
+st.title("🎯 Nifty Options Scanner (OI & Volume)")
 
-st.title("📈 Real-Time Market Monitor")
-st.caption("Live Data via Google Sheets & Yahoo Finance")
-
-# Aapka Sheet ID
 sheet_id = "1fygPji1DFm4gcf1D-3g2siTs1bV31FthfJaikLsinK4"
 csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
 
 try:
-    # Data load karna
     df = pd.read_csv(csv_url)
     
-    if not df.empty:
-        # 1. Top Highlights (Patti jaisa dikhega)
-        cols = st.columns(len(df))
-        for i, row in df.iterrows():
-            with cols[i]:
-                st.metric(label=row['Symbol'], value=str(row['LTP']), delta=str(row['% Change']))
+    # Scanner Analysis
+    st.subheader("🔥 Market Insights")
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.write("**Top OI Gainers (Smart Money Activity)**")
+        top_oi = df.sort_values(by='OI_Chng', ascending=False).head(5)
+        st.dataframe(top_oi[['Strike', 'Type', 'OI_Chng', 'LTP']], hide_index=True)
         
-        st.write("---")
-        
-        # 2. Watchlist Details (Sahi table)
-        st.subheader("Watchlist Details")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        st.success("✅ Dashboard is Live and Updating every 1 minute.")
-    else:
-        st.warning("Sheet load ho gayi hai par usme koi data nahi mila.")
+    with c2:
+        st.write("**High Volume Strikes (Intraday Action)**")
+        top_vol = df.sort_values(by='Volume', ascending=False).head(5)
+        st.dataframe(top_vol[['Strike', 'Type', 'Volume', 'LTP']], hide_index=True)
+
+    st.write("---")
+    st.subheader("Full Option Chain Scanner")
+    st.dataframe(df.style.background_gradient(subset=['OI_Chng'], cmap='RdYlGn'), use_container_width=True, hide_index=True)
 
 except Exception as e:
-    st.error("Connection Error: Please check your Google Sheet Share settings.")
-
-st.info("Tip: Naye stocks add karne ke liye Google Apps Script mein symbols update karein.")
+    st.error("Data abhi load nahi ho raha. Pehle Google Apps Script ko 'Run' karein.")
