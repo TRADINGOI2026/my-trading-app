@@ -1,88 +1,93 @@
 import streamlit as st
 import pandas as pd
-from nsepython import nse_optionchain_scrapper, nse_quote_ltp
+import requests
 
-# Page Config
+# Page setup
 st.set_page_config(page_title="Live Trading Scanner Pro", layout="wide")
 
-st.title("📊 Live Index & Stock Options Scanner")
+st.title("🚀 Live Index & Stock Options Scanner")
 
-# --- SIDEBAR FILTERS ---
-st.sidebar.header("Market Settings")
-market_symbol = st.sidebar.text_input("Enter Symbol (NIFTY / BANKNIFTY / SBIN)", "NIFTY")
-timeframe = st.sidebar.selectbox("Select Timeframe Filter", 
-    ["15 MIN", "30 MIN", "1 HOUR", "4 HOUR", "1 DAY", "7 DAYS"])
+# --- DATA FETCHING WITH HEADERS (NSE BLOCK FIX) ---
+def get_nse_data(symbol):
+    # NSE ko lagna chahiye ki ye browser se aa raha hai
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    
+    base_url = "https://www.nseindia.com/"
+    # Index ya Stock ke hisaab se URL badlega
+    if symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY"]:
+        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+    else:
+        url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}"
 
-sort_by = st.sidebar.radio("Sort Top Results By:", ["OI % Change", "Volume % Change"])
-
-# --- DATA FETCHING LOGIC ---
-@st.cache_data(ttl=60) # Har 60 seconds mein data refresh hoga
-def fetch_data(symbol):
     try:
-        # NSE se data khinchne ka function
-        payload = nse_optionchain_scrapper(symbol)
-        data = payload['filtered']['data']
+        session = requests.Session()
+        # Pehle main page visit karke cookies lena zaroori hai
+        session.get(base_url, headers=headers, timeout=10)
+        # Ab asli data lena
+        response = session.get(url, headers=headers, timeout=10)
         
-        rows = []
-        for d in data:
-            strike = d['strikePrice']
-            if 'CE' in d:
-                ce = d['CE']
-                rows.append({
-                    "Strike": f"{strike} CE",
-                    "LTP": ce['lastPrice'],
-                    "High": ce.get('highPrice', 0),
-                    "Low": ce.get('lowPrice', 0),
-                    "ATP": ce.get('underlyingValue', 0), # ATP logic
-                    "Volume": ce['totalTradedVolume'],
-                    "OI": ce['openInterest'],
-                    "OI Change %": ce['pchangeinOpenInterest']
-                })
-            if 'PE' in d:
-                pe = d['PE']
-                rows.append({
-                    "Strike": f"{strike} PE",
-                    "LTP": pe['lastPrice'],
-                    "High": pe.get('highPrice', 0),
-                    "Low": pe.get('lowPrice', 0),
-                    "ATP": pe.get('underlyingValue', 0),
-                    "Volume": pe['totalTradedVolume'],
-                    "OI": pe['openInterest'],
-                    "OI Change %": pe['pchangeinOpenInterest']
-                })
-        return pd.DataFrame(rows)
-    except:
-        return pd.DataFrame()
+        if response.status_code == 200:
+            return response.json()['filtered']['data']
+        else:
+            return None
+    except Exception as e:
+        return None
 
-# --- DISPLAY LOGIC ---
-df = fetch_data(market_symbol)
+# --- SIDEBAR ---
+st.sidebar.header("Market Settings")
+market_symbol = st.sidebar.text_input("Enter Symbol (NIFTY / BANKNIFTY / SBIN)", "NIFTY").upper()
+sort_by = st.sidebar.radio("Sort By:", ["OI % Change", "Volume"])
 
-if not df.empty:
-    # Sorting logic for Highlights
-    top_oi = df.sort_values(by="OI Change %", ascending=False).iloc[0]
+# --- PROCESS DATA ---
+raw_data = get_nse_data(market_symbol)
+
+if raw_data:
+    rows = []
+    for d in raw_data:
+        strike = d['strikePrice']
+        for side in ['CE', 'PE']:
+            if side in d:
+                opt = d[side]
+                rows.append({
+                    "Strike": f"{strike} {side}",
+                    "LTP": opt['lastPrice'],
+                    "Vol %": opt.get('pChangeInUnderlying', 0), # Temporary for Vol calculation
+                    "Volume": opt['totalTradedVolume'],
+                    "OI": opt['openInterest'],
+                    "OI % Change": opt['pchangeinOpenInterest'],
+                    "ATP": opt.get('underlyingValue', 0),
+                    "High": opt.get('highPrice', 0),
+                    "Low": opt.get('lowPrice', 0)
+                })
+    
+    df = pd.DataFrame(rows)
+
+    # Highlights
+    top_oi = df.sort_values(by="OI % Change", ascending=False).iloc[0]
     top_vol = df.sort_values(by="Volume", ascending=False).iloc[0]
 
-    # TOP HIGHLIGHTS CARDS
     c1, c2 = st.columns(2)
     with c1:
         st.info(f"🔥 TOP OI GAINER: {top_oi['Strike']}")
-        st.metric("OI Change %", f"{top_oi['OI Change %']}%", f"LTP: {top_oi['LTP']}")
+        st.metric("OI Change", f"{top_oi['OI % Change']}%", f"LTP: {top_oi['LTP']}")
     with c2:
         st.warning(f"📊 HIGHEST VOLUME: {top_vol['Strike']}")
         st.metric("Volume", f"{top_vol['Volume']}", f"LTP: {top_vol['LTP']}")
 
     st.write("---")
-
-    # Final Table with Sorting
+    
+    # Sorting & Display
     if sort_by == "OI % Change":
-        df_final = df.sort_values(by="OI Change %", ascending=False)
+        df = df.sort_values(by="OI % Change", ascending=False)
     else:
-        df_final = df.sort_values(by="Volume", ascending=False)
+        df = df.sort_values(by="Volume", ascending=False)
 
-    st.subheader(f"Detailed Analysis: {market_symbol} ({timeframe})")
-    st.dataframe(df_final.style.background_gradient(cmap='RdYlGn', subset=['OI Change %']), use_container_width=True)
-
+    st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['OI % Change']), use_container_width=True)
 else:
-    st.error("Market data fetch nahi ho raha. Check if Symbol is correct or NSE is busy.")
+    st.error("NSE ki website abhi busy hai. 1-2 minute baad 'Refresh' karein ya Symbol check karein.")
 
-st.caption("Data is fetched directly from NSE via nsepython. Use for analysis only.")
+st.caption("Note: Live market mein data har 1-3 minute mein update hota hai.")
